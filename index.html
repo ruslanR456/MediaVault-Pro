@@ -1,0 +1,1277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediaVault Pro - Persistent Local Playlists</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Configure Tailwind to use 'Inter' font and custom colors -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        'background-dark': '#111827', // Dark Slate
+                        'card-dark': '#1f2937', // Medium Slate
+                        'primary-blue': '#6366f1', // Indigo 500
+                        'accent-purple': '#a78bfa', // Violet 400
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Apply smooth scrolling and set dark background */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #111827;
+            color: white;
+            min-height: 100vh;
+        }
+
+        /* Custom scrollbar for better look */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background-color: #6366f1; /* primary-blue */
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background-color: #1f2937;
+        }
+        
+        /* Dropzone styling */
+        #dropzone {
+            transition: all 0.3s ease;
+            border: 3px dashed #6366f1;
+        }
+
+        #dropzone.dragover {
+            border-color: #a78bfa;
+            background-color: #374151;
+        }
+
+        /* Hide native players initially */
+        #audioPlayer, #videoElement {
+            display: none; 
+            width: 100%;
+            border-radius: 0.5rem;
+        }
+
+        /* Container for the player display */
+        #mediaDisplayContainer {
+            min-height: 256px; /* Ensure some height even when nothing is playing */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: #000;
+            border-radius: 0.75rem;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Style for active playlist item */
+        .playlist-item.active {
+            background-color: #4338ca; /* Indigo 700 */
+            border-left: 4px solid #a78bfa; /* Accent purple border */
+            color: white;
+            font-weight: 600;
+        }
+
+        /* Hidden file input for programatic trigger */
+        #fileInput {
+            display: none;
+        }
+
+        /* Player button styles */
+        .player-btn {
+            background-color: #374151;
+            transition: all 0.15s ease;
+        }
+        .player-btn:hover {
+            background-color: #4b5563;
+            transform: scale(1.05);
+        }
+        .player-btn:active {
+            transform: scale(0.98);
+        }
+
+        /* Custom Context Menu Styling */
+        #contextMenu {
+            position: fixed;
+            z-index: 1000;
+            background-color: #1f2937;
+            border: 1px solid #374151;
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            min-width: 200px;
+            overflow: hidden;
+            display: none; /* Initially hidden */
+        }
+
+        .context-item {
+            padding: 0.75rem 1rem;
+            cursor: pointer;
+            transition: background-color 0.15s;
+            display: flex;
+            align-items: center;
+            color: #d1d5db;
+        }
+
+        .context-item:hover {
+            background-color: #374151;
+            color: white;
+        }
+        .context-item svg {
+            margin-right: 0.5rem;
+        }
+        
+        /* Loading overlay for IndexedDB operations */
+        #loadingOverlay {
+            position: absolute;
+            inset: 0;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.25rem;
+            z-index: 50;
+            border-radius: 0.75rem;
+        }
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-top: 4px solid #a78bfa;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 1rem;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="max-w-7xl mx-auto">
+        <header class="mb-8">
+            <h1 class="text-4xl font-extrabold text-primary-blue tracking-tight">
+                MediaVault Pro 
+            </h1>
+            <p class="text-gray-400 text-lg">Your persistent, local media playlist manager (IndexedDB for storage)</p>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            
+            <!-- Player and Controls (Column 1) -->
+            <div class="lg:col-span-2 space-y-4">
+                
+                <!-- Media Display Area -->
+                <div id="mediaDisplayContainer" class="shadow-2xl">
+                    <div id="loadingOverlay">
+                        <div class="spinner"></div>
+                        <p id="loadingMessage">Processing media...</p>
+                    </div>
+
+                    <video id="videoElement" controls autoplay class="w-full h-full object-contain"></video>
+                    <audio id="audioPlayer" controls autoplay></audio>
+                    <div id="placeholderText" class="text-gray-500 text-xl p-8 text-center select-none">
+                        Drop media files here or click "Add Media" to start!
+                    </div>
+                </div>
+
+                <!-- Custom Player Controls (Hidden until media loads) -->
+                <div id="customControls" class="bg-card-dark p-4 rounded-xl shadow-lg flex flex-col md:flex-row items-center justify-between" style="display: none;">
+                    <div id="currentTrackInfo" class="text-sm md:text-base font-medium mb-4 md:mb-0 md:mr-4 truncate w-full md:w-1/3">
+                        <p class="text-primary-blue font-bold truncate" id="trackTitle">--</p>
+                        <p class="text-gray-400 text-xs" id="trackType">--</p>
+                    </div>
+
+                    <!-- Main Playback Buttons -->
+                    <div class="flex space-x-4">
+                        <button id="prevBtn" class="player-btn p-3 rounded-full text-white hover:text-accent-purple" title="Previous Track">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 15l-3-3m0 0l3-3m-3 3h8M3 12h2M19 12h2"></path></svg>
+                        </button>
+                        <button id="playPauseBtn" class="player-btn p-3 rounded-full text-white bg-primary-blue hover:bg-accent-purple" title="Play/Pause">
+                            <svg id="playIcon" class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.26a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664zM21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            <svg id="pauseIcon" class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="display: none;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        </button>
+                        <button id="nextBtn" class="player-btn p-3 rounded-full text-white hover:text-accent-purple" title="Next Track">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 15l3-3m0 0l-3-3m3 3H8m-5 3h2M21 12h-2"></path></svg>
+                        </button>
+                    </div>
+
+                    <!-- Volume Control -->
+                    <div class="flex items-center space-x-2 mt-4 md:mt-0 w-full md:w-1/4">
+                        <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.818 17.897a2.5 2.5 0 00-.733-.734L2 12l3.085-5.163a2.5 2.5 0 00.733-.733l.465.464A4.5 4.5 0 008 7.5a4.5 4.5 0 00-2.828-1.115l-.464.464M12 18v2m0-12V4"></path></svg>
+                        <input id="volumeSlider" type="range" min="0" max="1" step="0.01" value="1" class="w-full h-1 bg-gray-600 rounded-lg appearance-none cursor-pointer range-lg">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Playlist Manager (Column 2) -->
+            <div class="lg:col-span-1 space-y-4">
+                <!-- Dropzone and File Picker -->
+                <div id="dropzone" class="bg-card-dark p-6 rounded-xl text-center cursor-pointer hover:bg-gray-700/50 transition duration-150">
+                    <p class="text-lg font-semibold text-primary-blue mb-2">Drop Media Files Here</p>
+                    <p class="text-sm text-gray-400">or click the button below to browse (MP3, MP4, MOV, WEBM)</p>
+                </div>
+                <input type="file" id="fileInput" accept="audio/*,video/*" multiple>
+                <button id="addMediaBtn" class="w-full bg-primary-blue text-white font-bold py-3 px-4 rounded-xl hover:bg-accent-purple transition duration-150 shadow-lg">
+                    Add Media to Current Playlist
+                </button>
+                
+                <!-- Playlist Controls -->
+                <div class="bg-card-dark p-4 rounded-xl shadow-lg">
+                    <h2 class="text-xl font-bold mb-3 text-accent-purple">Playlists</h2>
+                    
+                    <div class="flex space-x-2 mb-3">
+                        <input type="text" id="newPlaylistName" placeholder="New playlist name" class="flex-grow p-2 rounded-lg bg-gray-700 text-white border border-gray-600 focus:ring-primary-blue focus:border-primary-blue">
+                        <button id="createPlaylistBtn" class="bg-green-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-700 transition duration-150">Create</button>
+                    </div>
+
+                    <div class="flex space-x-2 mb-3">
+                        <select id="playlistSelect" class="flex-grow p-2 rounded-lg bg-gray-700 text-white border border-gray-600 focus:ring-primary-blue focus:border-primary-blue"></select>
+                        <button id="deletePlaylistBtn" class="bg-red-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-red-700 transition duration-150">Delete</button>
+                    </div>
+                </div>
+
+                <!-- Track List -->
+                <div class="bg-card-dark p-4 rounded-xl shadow-lg h-[400px]">
+                    <h2 class="text-xl font-bold mb-3 text-accent-purple">Current Tracks</h2>
+                    <ul id="playlistTracks" class="space-y-2 overflow-y-auto custom-scrollbar h-[calc(100%-40px)]">
+                        <!-- Tracks will be inserted here -->
+                        <li class="text-gray-500 text-center p-4" id="emptyListMessage">Playlist is empty.</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Modal for Messages (No alert()) -->
+    <div id="modalOverlay" class="fixed inset-0 bg-black bg-opacity-75 hidden items-center justify-center p-4 z-50">
+        <div class="bg-card-dark p-6 rounded-xl shadow-2xl max-w-sm w-full text-center border-t-4 border-primary-blue">
+            <h3 id="modalTitle" class="text-xl font-bold mb-3 text-white">Title</h3>
+            <p id="modalMessage" class="text-gray-300 mb-4">Message</p>
+            <button id="modalCloseBtn" class="bg-primary-blue text-white font-semibold py-2 px-4 rounded-lg hover:bg-accent-purple transition duration-150">
+                OK
+            </button>
+        </div>
+    </div>
+
+    <!-- Custom Right-Click Context Menu -->
+    <div id="contextMenu" class="hidden">
+        <div id="copyToPlaylistOption" class="context-item" title="Copy this track to another playlist">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2.586m-4.414 4.414L9 16m9 0V9a2 2 0 00-2-2h-4a2 2 0 00-2 2v7.586a1 1 0 00.293.707l2.414 2.414a1 1 0 00.707.293H16a2 2 0 002-2z"></path></svg>
+            Copy to Playlist...
+        </div>
+    </div>
+
+    <!-- Playlist Selector Modal (Hidden) -->
+    <div id="playlistSelectorModal" class="fixed inset-0 bg-black bg-opacity-75 hidden items-center justify-center p-4 z-50">
+        <div class="bg-card-dark p-6 rounded-xl shadow-2xl max-w-sm w-full border-t-4 border-accent-purple">
+            <h3 class="text-xl font-bold mb-4 text-white">Copy Track To...</h3>
+            <p class="text-gray-400 mb-4">Select the destination playlist:</p>
+            <select id="destinationPlaylistSelect" class="w-full p-2 rounded-lg bg-gray-700 text-white border border-gray-600 focus:ring-primary-blue focus:border-primary-blue mb-6"></select>
+            
+            <div class="flex justify-end space-x-4">
+                <button id="cancelCopyBtn" class="bg-gray-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-gray-700 transition duration-150">Cancel</button>
+                <button id="confirmCopyBtn" class="bg-primary-blue text-white font-semibold py-2 px-4 rounded-lg hover:bg-accent-purple transition duration-150">Copy</button>
+            </div>
+        </div>
+    </div>
+
+
+<script>
+    // --- Global State and IndexedDB Setup ---
+    let playlists = {};
+    let activePlaylistName = 'Default';
+    let currentTrackIndex = -1;
+    let currentTrackData = null;
+    let activeMediaElement = null; // Either audioPlayer or videoElement
+    let trackToCopyIndex = -1; // Index of the track selected via right-click
+    let db = null; // IndexedDB instance
+    const DB_NAME = 'MediaVaultDB';
+    const STORE_NAME = 'mediaFiles';
+    const DB_VERSION = 1;
+
+
+    // --- DOM Elements ---
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('fileInput');
+    const addMediaBtn = document.getElementById('addMediaBtn');
+    const createPlaylistBtn = document.getElementById('createPlaylistBtn');
+    const deletePlaylistBtn = document.getElementById('deletePlaylistBtn');
+    const newPlaylistNameInput = document.getElementById('newPlaylistName');
+    const playlistSelect = document.getElementById('playlistSelect');
+    const playlistTracksList = document.getElementById('playlistTracks');
+    const emptyListMessage = document.getElementById('emptyListMessage');
+
+    const videoElement = document.getElementById('videoElement');
+    const audioPlayer = document.getElementById('audioPlayer');
+    const placeholderText = document.getElementById('placeholderText');
+    const customControls = document.getElementById('customControls');
+    const playPauseBtn = document.getElementById('playPauseBtn');
+    const playIcon = document.getElementById('playIcon');
+    const pauseIcon = document.getElementById('pauseIcon');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const volumeSlider = document.getElementById('volumeSlider');
+    const trackTitleDisplay = document.getElementById('trackTitle');
+    const trackTypeDisplay = document.getElementById('trackType');
+    const loadingOverlay = document.getElementById('loadingOverlay');
+    const loadingMessage = document.getElementById('loadingMessage');
+
+    // Modal elements
+    const modalOverlay = document.getElementById('modalOverlay');
+    const modalTitle = document.getElementById('modalTitle');
+    const modalMessage = document.getElementById('modalMessage');
+    const modalCloseBtn = document.getElementById('modalCloseBtn');
+
+    // New context menu elements
+    const contextMenu = document.getElementById('contextMenu');
+    const copyToPlaylistOption = document.getElementById('copyToPlaylistOption');
+
+    // New playlist selector modal elements
+    const playlistSelectorModal = document.getElementById('playlistSelectorModal');
+    const destinationPlaylistSelect = document.getElementById('destinationPlaylistSelect');
+    const confirmCopyBtn = document.getElementById('confirmCopyBtn');
+    const cancelCopyBtn = document.getElementById('cancelCopyBtn');
+
+
+    // --- IndexedDB Core Functions ---
+
+    /**
+     * Initializes the IndexedDB database connection.
+     * @returns {Promise<IDBDatabase>} The IDBDatabase instance.
+     */
+    function initDB() {
+        return new Promise((resolve, reject) => {
+            if (!window.indexedDB) {
+                reject(new Error("IndexedDB is not supported by your browser. Media cannot be stored persistently."));
+                return;
+            }
+
+            const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+            request.onerror = (event) => {
+                console.error("IndexedDB initialization error:", event.target.error);
+                reject(event.target.error);
+            };
+
+            request.onsuccess = (event) => {
+                db = event.target.result;
+                resolve(db);
+            };
+
+            request.onupgradeneeded = (event) => {
+                const dbInstance = event.target.result;
+                if (!dbInstance.objectStoreNames.contains(STORE_NAME)) {
+                    dbInstance.createObjectStore(STORE_NAME, { keyPath: 'id' });
+                }
+            };
+        });
+    }
+
+    /**
+     * Shows the loading spinner for long-running IndexedDB operations.
+     * @param {string} message - The message to display.
+     */
+    function showLoading(message) {
+        loadingMessage.textContent = message;
+        loadingOverlay.style.display = 'flex';
+    }
+
+    /**
+     * Hides the loading spinner.
+     */
+    function hideLoading() {
+        loadingOverlay.style.display = 'none';
+    }
+
+    /**
+     * Saves a media file (ArrayBuffer) to IndexedDB.
+     * @param {string} id - Unique identifier for the media.
+     * @param {ArrayBuffer} data - The binary data of the file.
+     * @param {string} type - The MIME type.
+     * @returns {Promise<void>}
+     */
+    function saveMediaToDB(id, data, type) {
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction([STORE_NAME], 'readwrite');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.put({ id: id, data: data, type: type });
+
+            request.onsuccess = () => resolve();
+            request.onerror = (event) => reject(event.target.error);
+        });
+    }
+
+    /**
+     * Retrieves media data (ArrayBuffer and type) from IndexedDB by ID.
+     * @param {string} id - The unique identifier of the media.
+     * @returns {Promise<{data: ArrayBuffer, type: string}>}
+     */
+    function getMediaFromDB(id) {
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction([STORE_NAME], 'readonly');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.get(id);
+
+            request.onsuccess = (event) => {
+                if (event.target.result) {
+                    resolve({
+                        data: event.target.result.data,
+                        type: event.target.result.type
+                    });
+                } else {
+                    reject(new Error(`Media with ID ${id} not found.`));
+                }
+            };
+            request.onerror = (event) => reject(event.target.error);
+        });
+    }
+
+    /**
+     * Deletes media data from IndexedDB by ID.
+     * @param {string} id - The unique identifier of the media.
+     * @returns {Promise<void>}
+     */
+    function deleteMediaFromDB(id) {
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction([STORE_NAME], 'readwrite');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.delete(id);
+
+            request.onsuccess = () => resolve();
+            request.onerror = (event) => reject(event.target.error);
+        });
+    }
+
+
+    // --- Utility Functions ---
+
+    /**
+     * Creates a unique ID (using crypto.randomUUID if available, otherwise a fallback).
+     * @returns {string} A unique ID.
+     */
+    function createUniqueId() {
+        if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+            return crypto.randomUUID();
+        } else {
+            return 'id-' + Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
+        }
+    }
+
+    /**
+     * Shows a custom modal instead of using the forbidden alert() or confirm().
+     * @param {string} title - The title of the message.
+     * @param {string} message - The message content.
+     */
+    function showModal(title, message) {
+        modalTitle.textContent = title;
+        modalMessage.textContent = message;
+        modalOverlay.classList.remove('hidden');
+        modalOverlay.classList.add('flex');
+    }
+
+    modalCloseBtn.addEventListener('click', () => {
+        modalOverlay.classList.add('hidden');
+        modalOverlay.classList.remove('flex');
+    });
+
+    /**
+     * Saves the current playlist structure (metadata and media IDs) to localStorage.
+     */
+    function savePlaylists() {
+        try {
+            // Only store structure and mediaId, not the binary data
+            localStorage.setItem('playlists', JSON.stringify(playlists));
+            localStorage.setItem('activePlaylistName', activePlaylistName);
+        } catch (error) {
+            console.error("Failed to save playlists structure to localStorage:", error);
+            showModal("Storage Error", "Could not save playlist names to local storage. Data might be too large or quota exceeded.");
+        }
+    }
+
+    /**
+     * Loads the playlist structure from localStorage.
+     */
+    function loadPlaylists() {
+        try {
+            const storedPlaylists = localStorage.getItem('playlists');
+            const storedActiveName = localStorage.getItem('activePlaylistName');
+
+            if (storedPlaylists) {
+                playlists = JSON.parse(storedPlaylists);
+            }
+            
+            // Ensure there is always a 'Default' playlist
+            if (!playlists['Default']) {
+                playlists['Default'] = [];
+            }
+
+            // Restore active playlist name, defaulting to 'Default' if needed
+            if (storedActiveName && playlists.hasOwnProperty(storedActiveName)) {
+                activePlaylistName = storedActiveName;
+            } else {
+                activePlaylistName = 'Default';
+            }
+
+        } catch (error) {
+            console.error("Failed to load or parse playlists from localStorage:", error);
+            playlists = { 'Default': [] }; // Fallback
+            activePlaylistName = 'Default';
+            showModal("Load Error", "Failed to load playlist structure. Starting with a default list.");
+        }
+    }
+
+    /**
+     * Renders the list of tracks for the active playlist.
+     */
+    function renderTracks() {
+        const tracks = playlists[activePlaylistName] || [];
+        playlistTracksList.innerHTML = '';
+        
+        if (tracks.length === 0) {
+            emptyListMessage.style.display = 'block';
+            playlistTracksList.appendChild(emptyListMessage);
+            return;
+        }
+
+        emptyListMessage.style.display = 'none';
+
+        tracks.forEach((track, index) => {
+            const li = document.createElement('li');
+            li.className = `playlist-item p-3 rounded-lg cursor-pointer flex justify-between items-center text-gray-300 hover:bg-gray-700/50 transition duration-100 ${index === currentTrackIndex ? 'active' : ''}`;
+            li.dataset.index = index;
+            li.title = track.name;
+            
+            // Add right-click listener
+            li.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                showContextMenu(e, index);
+            });
+
+            // Create a file icon (using inline SVG for simplicity)
+            let iconPath = track.type.startsWith('video') ? "M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M4 18h12a2 2 0 002-2V8a2 2 0 00-2-2H4a2 2 0 00-2 2v8a2 2 0 002 2z" : "M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z";
+            let typeColor = track.type.startsWith('video') ? 'text-red-400' : 'text-primary-blue';
+
+            li.innerHTML = `
+                <div class="flex items-center space-x-3 truncate pointer-events-none">
+                    <svg class="w-5 h-5 flex-shrink-0 ${typeColor}" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${iconPath}"></path></svg>
+                    <span class="truncate">${track.name}</span>
+                </div>
+                <button class="remove-track-btn text-gray-400 hover:text-red-500 p-1 rounded transition duration-150 flex-shrink-0" data-index="${index}" title="Remove Track">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            `;
+
+            li.addEventListener('click', (e) => {
+                if (!e.target.closest('.remove-track-btn')) {
+                    playTrack(index);
+                }
+            });
+
+            playlistTracksList.appendChild(li);
+        });
+        
+        // Attach listeners for remove buttons
+        document.querySelectorAll('.remove-track-btn').forEach(button => {
+            button.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const indexToRemove = parseInt(e.currentTarget.dataset.index);
+                removeTrack(indexToRemove);
+            });
+        });
+    }
+
+    /**
+     * Renders the options in the playlist dropdown.
+     */
+    function renderPlaylistSelect() {
+        playlistSelect.innerHTML = '';
+        destinationPlaylistSelect.innerHTML = ''; 
+
+        const names = Object.keys(playlists);
+        names.forEach(name => {
+            const option = document.createElement('option');
+            option.value = name;
+            option.textContent = `${name} (${playlists[name].length})`;
+            if (name === activePlaylistName) {
+                option.selected = true;
+            }
+            playlistSelect.appendChild(option);
+            
+            // Also add to the destination select for copying
+            const destOption = option.cloneNode(true);
+            destOption.selected = false; 
+            if (name === activePlaylistName) {
+                 destOption.disabled = true;
+                 destOption.textContent += " (Current)";
+            }
+            destinationPlaylistSelect.appendChild(destOption);
+        });
+
+        // Toggle delete button visibility for 'Default' playlist
+        deletePlaylistBtn.disabled = activePlaylistName === 'Default';
+        deletePlaylistBtn.classList.toggle('opacity-50', activePlaylistName === 'Default');
+    }
+    
+    /**
+     * Initializes a media element (audio or video) for playback.
+     * @param {string} url - The object URL of the file (newly created for this session).
+     * @param {string} type - The MIME type of the file.
+     */
+    function initMediaElement(url, type) {
+        // Revoke any previous object URLs to prevent memory leaks
+        if (activeMediaElement && activeMediaElement.src.startsWith('blob:')) {
+            URL.revokeObjectURL(activeMediaElement.src);
+        }
+
+        // Hide previous element and placeholder
+        videoElement.style.display = 'none';
+        audioPlayer.style.display = 'none';
+        placeholderText.style.display = 'none';
+        customControls.style.display = 'flex';
+        
+        // Determine which element to use
+        if (type.startsWith('video/')) {
+            activeMediaElement = videoElement;
+        } else if (type.startsWith('audio/')) {
+            activeMediaElement = audioPlayer;
+        } else {
+            console.error("Unsupported media type:", type);
+            showModal("Unsupported File", `The file type "${type.split('/')[1]}" is not supported for playback.`);
+            return;
+        }
+
+        // Set source and display element
+        activeMediaElement.src = url;
+        activeMediaElement.style.display = 'block';
+        activeMediaElement.load();
+        
+        // Link volume slider
+        activeMediaElement.volume = parseFloat(volumeSlider.value);
+        
+        // Update track info
+        trackTitleDisplay.textContent = currentTrackData.name;
+        trackTypeDisplay.textContent = activePlaylistName + (type.startsWith('video') ? ' / Video' : ' / Audio');
+        
+        // Play the media
+        activeMediaElement.play().catch(error => {
+            if (error.name === 'NotAllowedError' || error.name === 'AbortError') {
+                console.warn("Autoplay blocked. User intervention required.");
+            } else {
+                console.error("Error playing media:", error);
+            }
+        });
+
+        updatePlayPauseButton(false);
+        updateMediaSession();
+    }
+
+    /**
+     * Plays a track from the current playlist by index, fetching data from IndexedDB.
+     * @param {number} index - The index of the track in the current playlist.
+     */
+    async function playTrack(index) {
+        const tracks = playlists[activePlaylistName];
+        if (index < 0 || index >= tracks.length) {
+            console.log("Playlist end reached.");
+            // Reset player and UI if reached end of playlist
+            if (activeMediaElement) {
+                activeMediaElement.pause();
+                // Revoke object URL
+                if (activeMediaElement.src.startsWith('blob:')) URL.revokeObjectURL(activeMediaElement.src);
+                activeMediaElement.src = '';
+                activeMediaElement.load();
+                activeMediaElement = null;
+            }
+            customControls.style.display = 'none';
+            placeholderText.style.display = 'block';
+            trackTitleDisplay.textContent = '--';
+            trackTypeDisplay.textContent = '--';
+            currentTrackIndex = -1;
+            renderTracks();
+            return;
+        }
+
+        currentTrackIndex = index;
+        currentTrackData = tracks[index];
+        renderTracks(); // Update active highlight
+
+        showLoading("Loading media from disk...");
+        try {
+            const mediaId = currentTrackData.mediaId;
+            const media = await getMediaFromDB(mediaId); // Fetch binary data from IndexedDB
+
+            // Create a Blob and a fresh Object URL for playback in this session
+            const blob = new Blob([media.data], { type: media.type });
+            const url = URL.createObjectURL(blob);
+            
+            initMediaElement(url, media.type);
+        } catch (error) {
+            console.error("Error fetching or playing track:", error);
+            showModal("Playback Error", `Could not load media file: ${currentTrackData.name}. It may have been deleted from disk.`);
+            // Automatically play next track on error
+            playNextTrack();
+        } finally {
+            hideLoading();
+        }
+    }
+
+    /**
+     * Plays the next track in the playlist. Global exposure for MediaSession.
+     */
+    function playNextTrack() {
+        if (!playlists[activePlaylistName] || playlists[activePlaylistName].length === 0) return;
+        
+        let nextIndex = currentTrackIndex + 1;
+        if (nextIndex >= playlists[activePlaylistName].length) {
+            nextIndex = 0; // Loop back to start
+        }
+        playTrack(nextIndex);
+    }
+    
+    // Global function for MediaSession access
+    window._playNextTrack = playNextTrack; 
+
+    /**
+     * Plays the previous track in the playlist. Global exposure for MediaSession.
+     */
+    function playPreviousTrack() {
+        if (!playlists[activePlaylistName] || playlists[activePlaylistName].length === 0) return;
+
+        let prevIndex = currentTrackIndex - 1;
+        if (prevIndex < 0) {
+            prevIndex = playlists[activePlaylistName].length - 1; // Loop back to end
+        }
+        playTrack(prevIndex);
+    }
+
+    // Global function for MediaSession access
+    window._playPreviousTrack = playPreviousTrack; 
+
+    /**
+     * Removes a track from the current playlist and its data from IndexedDB.
+     * @param {number} index - The index of the track to remove.
+     */
+    async function removeTrack(index) {
+        const tracks = playlists[activePlaylistName];
+        if (index < 0 || index >= tracks.length) return;
+        
+        const trackToRemove = tracks[index];
+
+        // 1. If the current track is being removed, stop playback
+        if (index === currentTrackIndex) {
+            if (activeMediaElement) {
+                activeMediaElement.pause();
+                if (activeMediaElement.src.startsWith('blob:')) URL.revokeObjectURL(activeMediaElement.src);
+            }
+            currentTrackIndex = -1;
+            currentTrackData = null;
+            customControls.style.display = 'none';
+            placeholderText.style.display = 'block';
+        }
+        
+        // 2. Delete media from IndexedDB if it's not referenced in any other playlist
+        const isReferenced = Object.values(playlists).flat().some(t => t.mediaId === trackToRemove.mediaId && t !== trackToRemove);
+        
+        if (!isReferenced) {
+            showLoading("Deleting file from persistent storage...");
+            try {
+                await deleteMediaFromDB(trackToRemove.mediaId);
+            } catch (error) {
+                console.error("Failed to delete media from DB:", error);
+                // Continue removing from playlist even if DB delete fails
+            } finally {
+                hideLoading();
+            }
+        }
+
+        // 3. Remove the track structure from the playlist
+        tracks.splice(index, 1);
+
+        // 4. Adjust currentTrackIndex if a track before it was removed
+        if (currentTrackIndex > index) {
+            currentTrackIndex--;
+        }
+
+        savePlaylists();
+        renderTracks();
+        renderPlaylistSelect();
+    }
+
+    /**
+     * Updates the UI for the play/pause button.
+     * @param {boolean} isPaused - True if the media is currently paused.
+     */
+    function updatePlayPauseButton(isPaused) {
+        if (isPaused) {
+            playIcon.style.display = 'block';
+            pauseIcon.style.display = 'none';
+            playPauseBtn.title = 'Play';
+        } else {
+            playIcon.style.display = 'none';
+            pauseIcon.style.display = 'block';
+            playPauseBtn.title = 'Pause';
+        }
+    }
+
+    /**
+     * Updates the Media Session metadata for OS/browser controls.
+     */
+    function updateMediaSession() {
+        if ('mediaSession' in navigator && currentTrackData) {
+            navigator.mediaSession.metadata = new MediaMetadata({
+                title: currentTrackData.name,
+                artist: activePlaylistName,
+                album: "MediaVault Pro",
+            });
+            
+            // Set position state (optional but good practice)
+            if (activeMediaElement && activeMediaElement.duration) {
+                navigator.mediaSession.setPositionState({
+                    duration: activeMediaElement.duration,
+                    playbackRate: activeMediaElement.playbackRate,
+                    position: activeMediaElement.currentTime
+                });
+            }
+        }
+    }
+
+
+    // --- Context Menu Functions ---
+
+    /**
+     * Shows the custom context menu at the click position.
+     * @param {Event} e - The contextmenu event.
+     * @param {number} index - The index of the track that was right-clicked.
+     */
+    function showContextMenu(e, index) {
+        trackToCopyIndex = index;
+        
+        // Position the context menu
+        contextMenu.style.left = `${e.clientX}px`;
+        contextMenu.style.top = `${e.clientY}px`;
+        contextMenu.style.display = 'block';
+    }
+
+    /**
+     * Hides the custom context menu.
+     */
+    function hideContextMenu() {
+        contextMenu.style.display = 'none';
+        trackToCopyIndex = -1;
+    }
+
+    // Hide context menu when clicking anywhere else
+    document.addEventListener('click', hideContextMenu);
+
+    // Stop context menu hiding when clicking inside the context menu
+    contextMenu.addEventListener('click', (e) => e.stopPropagation());
+
+    // Action when "Copy to Playlist..." is clicked
+    copyToPlaylistOption.addEventListener('click', () => {
+        hideContextMenu();
+        
+        // Get available playlists for the modal select (excluding the current one)
+        renderPlaylistSelect(); 
+
+        // Show the playlist selector modal
+        playlistSelectorModal.classList.remove('hidden');
+        playlistSelectorModal.classList.add('flex');
+    });
+
+    // Action when "Copy" button in the modal is clicked
+    confirmCopyBtn.addEventListener('click', () => {
+        const destinationName = destinationPlaylistSelect.value;
+        const tracks = playlists[activePlaylistName];
+
+        if (trackToCopyIndex === -1 || !destinationName || !tracks[trackToCopyIndex]) {
+            showModal("Error", "Could not complete copy operation.");
+            return;
+        }
+
+        const trackToCopy = tracks[trackToCopyIndex];
+        
+        // When copying, we only need to copy the metadata and mediaId, 
+        // as the binary data is persistently stored in IndexedDB.
+        playlists[destinationName].push({
+            name: trackToCopy.name,
+            type: trackToCopy.type,
+            mediaId: trackToCopy.mediaId // Reference the same stored file
+        });
+        
+        savePlaylists();
+        
+        // Hide modal and show success message
+        playlistSelectorModal.classList.add('hidden');
+        playlistSelectorModal.classList.remove('flex');
+        showModal("Track Copied", `"${trackToCopy.name}" was successfully copied to the "${destinationName}" playlist. The file data is shared.`);
+        
+        // Update the list of all playlists (to show the new track count)
+        renderPlaylistSelect();
+    });
+
+    // Action when "Cancel" button in the modal is clicked
+    cancelCopyBtn.addEventListener('click', () => {
+        playlistSelectorModal.classList.add('hidden');
+        playlistSelectorModal.classList.remove('flex');
+        trackToCopyIndex = -1;
+    });
+
+
+    // --- File Handling ---
+
+    // 1. Drag and Drop Handling
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        dropzone.addEventListener(eventName, preventDefaults, false);
+    });
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropzone.addEventListener(eventName, () => dropzone.classList.add('dragover'), false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropzone.addEventListener(eventName, () => dropzone.classList.remove('dragover'), false);
+    });
+
+    dropzone.addEventListener('drop', handleDrop, false);
+
+    function preventDefaults(e) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+
+    function handleDrop(e) {
+        const dt = e.dataTransfer;
+        const files = dt.files;
+        handleFiles(files);
+    }
+
+    // 2. File Input Handling
+    addMediaBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
+
+    /**
+     * Reads files as ArrayBuffer and saves them to IndexedDB.
+     * @param {FileList} files - List of File objects.
+     */
+    async function handleFiles(files) {
+        if (!files || files.length === 0) return;
+
+        const tracks = playlists[activePlaylistName];
+        let newTracksAdded = false;
+
+        for (const file of Array.from(files)) {
+            if (file.type.startsWith('audio/') || file.type.startsWith('video/')) {
+                const mediaId = createUniqueId();
+
+                try {
+                    showLoading(`Saving ${file.name} to persistent storage...`);
+
+                    // 1. Read file as ArrayBuffer
+                    const arrayBuffer = await new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = (e) => resolve(e.target.result);
+                        reader.onerror = (e) => reject(e.target.error);
+                        reader.readAsArrayBuffer(file);
+                    });
+
+                    // 2. Save ArrayBuffer to IndexedDB
+                    await saveMediaToDB(mediaId, arrayBuffer, file.type);
+                    
+                    // 3. Add track metadata (using the new persistent mediaId) to the playlist
+                    const track = {
+                        name: file.name,
+                        type: file.type,
+                        mediaId: mediaId, // This ID is the persistent key
+                    };
+                    tracks.push(track);
+                    newTracksAdded = true;
+
+                } catch (error) {
+                    console.error(`Failed to process file ${file.name}:`, error);
+                    showModal("File Save Failed", `Could not save "${file.name}" to the database. Error: ${error.message}`);
+                } finally {
+                    hideLoading();
+                }
+            } else {
+                showModal("File Skipped", `The file "${file.name}" was skipped because its type (${file.type}) is not supported.`);
+            }
+        }
+        
+        if (newTracksAdded) {
+            savePlaylists();
+            renderTracks();
+
+            // If this is the first track, start playing it
+            if (tracks.length > 0 && currentTrackIndex === -1) {
+                playTrack(0);
+            }
+        }
+    }
+
+    // --- Playlist Management ---
+
+    createPlaylistBtn.addEventListener('click', () => {
+        const name = newPlaylistNameInput.value.trim();
+        if (!name) {
+            showModal("Error", "Please enter a name for the new playlist.");
+            return;
+        }
+        if (playlists[name]) {
+            showModal("Error", `Playlist "${name}" already exists.`);
+            return;
+        }
+
+        playlists[name] = [];
+        activePlaylistName = name;
+        newPlaylistNameInput.value = '';
+
+        savePlaylists();
+        renderPlaylistSelect();
+        renderTracks();
+        showModal("Success", `Playlist "${name}" created and set as active.`);
+    });
+
+    deletePlaylistBtn.addEventListener('click', async () => {
+        if (activePlaylistName === 'Default') {
+            showModal("Cannot Delete", "The 'Default' playlist cannot be deleted.");
+            return;
+        }
+
+        if (confirm(`Are you sure you want to delete the playlist "${activePlaylistName}"? The track entries will be removed, but the persistent media files will ONLY be deleted if they are not used in any other playlist.`)) {
+            
+            // 1. Get all mediaIds in the playlist we are deleting
+            const mediaIdsToDelete = playlists[activePlaylistName].map(t => t.mediaId);
+
+            // 2. Stop active playback if it was from the deleted playlist
+            if (activeMediaElement) {
+                activeMediaElement.pause();
+                if (activeMediaElement.src.startsWith('blob:')) URL.revokeObjectURL(activeMediaElement.src);
+                activeMediaElement.src = '';
+                activeMediaElement.load();
+                activeMediaElement = null;
+            }
+
+            // 3. Delete the playlist structure
+            delete playlists[activePlaylistName];
+            activePlaylistName = 'Default';
+            currentTrackIndex = -1; // Reset playback
+            
+            // 4. Find all currently referenced mediaIds (in remaining playlists)
+            const remainingMediaIds = new Set(Object.values(playlists).flat().map(t => t.mediaId));
+
+            // 5. Delete files from IndexedDB that are no longer referenced anywhere
+            for (const mediaId of mediaIdsToDelete) {
+                if (!remainingMediaIds.has(mediaId)) {
+                    try {
+                        await deleteMediaFromDB(mediaId);
+                    } catch (e) {
+                        console.error(`Failed to delete unreferenced media ID ${mediaId}:`, e);
+                    }
+                }
+            }
+
+            savePlaylists();
+            renderPlaylistSelect();
+            renderTracks();
+            showModal("Deleted", "Playlist deleted successfully. Switched to 'Default'. Files were cleaned up if unreferenced.");
+        }
+    });
+
+    playlistSelect.addEventListener('change', (e) => {
+        activePlaylistName = e.target.value;
+        currentTrackIndex = -1; // Reset track index when switching
+        
+        // Stop current playback to prevent issues with switching source
+        if (activeMediaElement) {
+            activeMediaElement.pause();
+            if (activeMediaElement.src.startsWith('blob:')) URL.revokeObjectURL(activeMediaElement.src);
+            activeMediaElement.src = '';
+            activeMediaElement.load();
+            activeMediaElement = null;
+        }
+        
+        savePlaylists();
+        renderPlaylistSelect(); // Re-render to update the delete button state
+        renderTracks();
+        
+        customControls.style.display = 'none';
+        placeholderText.style.display = 'block';
+    });
+
+    // --- Player Controls ---
+    // (Same as before, relying on playTrack to handle IDB lookup)
+
+    playPauseBtn.addEventListener('click', () => {
+        if (!activeMediaElement) {
+            if (playlists[activePlaylistName].length > 0) {
+                playTrack(0); // Start playing the first track
+            }
+            return;
+        }
+        if (activeMediaElement.paused) {
+            activeMediaElement.play().catch(console.error);
+        } else {
+            activeMediaElement.pause();
+        }
+    });
+
+    prevBtn.addEventListener('click', playPreviousTrack);
+    nextBtn.addEventListener('click', playNextTrack);
+
+    volumeSlider.addEventListener('input', (e) => {
+        const volume = parseFloat(e.target.value);
+        // Only update volume on active element if it exists
+        if (activeMediaElement) {
+            activeMediaElement.volume = volume;
+        }
+        // Save volume setting to local storage for persistence
+        localStorage.setItem('mediaVolume', volume); 
+    });
+
+    // 5. Media Events
+    [videoElement, audioPlayer].forEach(el => {
+        el.addEventListener('play', () => updatePlayPauseButton(false));
+        el.addEventListener('pause', () => updatePlayPauseButton(true));
+        
+        el.addEventListener('ended', playNextTrack);
+        
+        el.addEventListener('error', (e) => {
+            console.error('Media playback error:', e);
+            showModal("Playback Error", `An error occurred while playing the track: ${currentTrackData?.name}. The file may be corrupt or missing. Skipping to next track.`);
+            // Try playing the next track on error
+            playNextTrack(); 
+        });
+
+        el.addEventListener('timeupdate', () => {
+            if ('mediaSession' in navigator && el.duration) {
+                navigator.mediaSession.setPositionState({
+                    duration: el.duration,
+                    playbackRate: el.playbackRate,
+                    position: el.currentTime
+                });
+            }
+        });
+    });
+
+    // --- Initialization ---
+
+    /**
+     * Initializes the entire application state and UI.
+     */
+    async function initializeApp() {
+        try {
+            // 1. Initialize IndexedDB
+            await initDB();
+            
+            // 2. Load playlist structure from localStorage
+            loadPlaylists();
+            
+            // 3. Set initial volume
+            const storedVolume = localStorage.getItem('mediaVolume');
+            if (storedVolume !== null) {
+                volumeSlider.value = storedVolume;
+            }
+            // Since we don't know which player is active, we'll set the volume when media loads.
+
+            // 4. Render initial UI
+            renderPlaylistSelect();
+            renderTracks();
+            
+            // Ensure initial state of controls is correct
+            updatePlayPauseButton(true);
+
+            // 5. Setup controls and Media Session API
+            setupMediaSessionAndKeyboardControls();
+
+        } catch (error) {
+            console.error("Application initialization failed:", error);
+            showModal("Fatal Error", `Failed to initialize the media player. Check console for details. Persistence is disabled.`);
+        }
+    }
+
+    /**
+     * Sets up Media Session API handlers and keyboard controls.
+     */
+    function setupMediaSessionAndKeyboardControls() {
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            const el = activeMediaElement;
+            if (!el) return;
+
+            switch (e.code) {
+                case 'Space': // Play/Pause
+                    e.preventDefault(); 
+                    if (el.paused) { el.play(); } else { el.pause(); }
+                    break;
+                case 'MediaTrackNext':
+                    window._playNextTrack();
+                    break;
+                case 'MediaTrackPrevious':
+                    window._playPreviousTrack();
+                    break;
+                case 'ArrowRight':
+                    el.currentTime = Math.min(el.duration, el.currentTime + 5);
+                    break;
+                case 'ArrowLeft':
+                    el.currentTime = Math.max(0, el.currentTime - 5);
+                    break;
+            }
+        });
+
+        // Hardware media keys (Media Session API)
+        if ('mediaSession' in navigator) {
+            navigator.mediaSession.setActionHandler('play', () => {
+                if (activeMediaElement?.paused) activeMediaElement.play();
+            });
+
+            navigator.mediaSession.setActionHandler('pause', () => {
+                if (activeMediaElement && !activeMediaElement.paused) activeMediaElement.pause();
+            });
+
+            navigator.mediaSession.setActionHandler('nexttrack', () => {
+                playNextTrack();
+            });
+
+            navigator.mediaSession.setActionHandler('previoustrack', () => {
+                playPreviousTrack();
+            });
+
+            navigator.mediaSession.setActionHandler('seekforward', (details) => {
+                const seekTime = details.seekOffset || 10;
+                if (activeMediaElement) activeMediaElement.currentTime += seekTime;
+            });
+
+            navigator.mediaSession.setActionHandler('seekbackward', (details) => {
+                const seekTime = details.seekOffset || 10;
+                if (activeMediaElement) activeMediaElement.currentTime -= seekTime;
+            });
+            
+            // Set default empty metadata
+            navigator.mediaSession.metadata = new MediaMetadata({
+                title: 'No media loaded',
+                artist: 'MediaVault Pro',
+                album: 'Local Player'
+            });
+        }
+    }
+
+    // Start the application when the DOM is fully loaded
+    document.addEventListener("DOMContentLoaded", initializeApp);
+</script>
+</body>
+</html>
